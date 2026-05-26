@@ -90,7 +90,6 @@ def build_graph(coords, seq, label, radius=8.0):
     )
 
 
-
 g = build_graph(coords, seq, label=0, radius=8.0)
 """print(g)
 print(f"nodes:              {g.num_nodes}")
