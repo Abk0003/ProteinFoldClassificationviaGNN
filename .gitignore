@@ -1,0 +1,28 @@
+# data
+data/
+pdbs/
+*.lmdb
+*.tar.gz
+*.zip
+*.pdb
+*.ent
+*.npy
+*.pt
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# editor
+.idea/
+.vscode/
+
+# outputs
+results/
+*.png
+*.jpg
+checkpoints/
+*.ckpt
