@@ -90,9 +90,9 @@ def build_graph(coords, seq, label, radius=8.0):
     )
 
 
-# ---- run it ----
+
 g = build_graph(coords, seq, label=0, radius=8.0)
-print(g)
+"""print(g)
 print(f"nodes:              {g.num_nodes}")
 print(f"node feature dim:   {g.x.shape[1]}")
 print(f"total edges:        {g.num_edges}")
@@ -105,6 +105,8 @@ src, dst = g.edge_index[:, sp_mask]
 distances = np.linalg.norm(coords[src.numpy()] - coords[dst.numpy()], axis=1)
 print(f"spatial dist mean:  {distances.mean():.2f} Å")
 print(f"spatial dist max:   {distances.max():.2f} Å")
-print(f"avg neighbors/node: {g.num_edges / g.num_nodes:.1f}")
+print(f"avg neighbors/node: {g.num_edges / g.num_nodes:.1f}")"""
+
+
 
 
