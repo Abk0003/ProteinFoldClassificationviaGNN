@@ -6,12 +6,6 @@ import torch.nn as nn
 from Bio.PDB import PDBParser
 from torch_geometric.data import Data
 
-os.makedirs("pdbs", exist_ok=True)
-urllib.request.urlretrieve(
-    "https://files.rcsb.org/download/1UBQ.pdb",
-    "pdbs/1ubq.pdb"
-)
-
 amino = {
     "ALA": "A", "ARG": "R", "ASN": "N", "ASP": "D", "CYS": "C",
     "GLN": "Q", "GLU": "E", "GLY": "G", "HIS": "H", "ILE": "I",
@@ -45,7 +39,6 @@ def parse_pdb(pdb_path,chain_id=None):
     return np.array(coord), seq
 
 
-coords, seq = parse_pdb("pdbs/1ubq.pdb", chain_id="A")
 """ check for correct parsing 
 print(f"length: {len(aa)}")              # should be 76
 print(f"sequence: {''.join(aa)}")
@@ -90,7 +83,15 @@ def build_graph(coords, seq, label, radius=8.0):
     )
 
 
-g = build_graph(coords, seq, label=0, radius=8.0)
+if __name__ == "__main__":
+    os.makedirs("pdbs", exist_ok=True)
+    urllib.request.urlretrieve(
+        "https://files.rcsb.org/download/1UBQ.pdb",
+        "pdbs/1ubq.pdb"
+    )
+    coords, seq = parse_pdb("pdbs/1ubq.pdb")
+    g = build_graph(coords, seq,label=0)
+
 """print(g)
 print(f"nodes:              {g.num_nodes}")
 print(f"node feature dim:   {g.x.shape[1]}")

@@ -13,7 +13,8 @@ import numpy as np
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
-dataset = TUDataset(root='./data/', name='PROTEINS', use_node_attr=True,)
+from cath_dataset import Dataset
+dataset = Dataset(root='data/cath', min_fold_count=10, radius=8.0, max_len=600)
 
 print(dataset)
 print(dataset.num_classes)
@@ -80,9 +81,9 @@ def run_one_fold(train_idx, val_idx, test_idx, fold_num):
     train, val, test = dataset[train_idx], dataset[val_idx], dataset[test_idx]
     print(f"\n=== Fold {fold_num} === train:{len(train)} val:{len(val)} test:{len(test)}")
 
-    train_loader = DataLoader(dataset=train, batch_size=32, shuffle=True)
-    val_loader = DataLoader(dataset=val, batch_size=32, shuffle=True)
-    test_loader = DataLoader(dataset=test, batch_size=32, shuffle=True)
+    train_loader = DataLoader(dataset=train, batch_size=128, shuffle=True)
+    val_loader = DataLoader(dataset=val, batch_size=128, shuffle=True)
+    test_loader = DataLoader(dataset=test, batch_size=128, shuffle=True)
 
     model = GNNClassifier().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.0005)
@@ -127,8 +128,8 @@ def run_one_fold(train_idx, val_idx, test_idx, fold_num):
     return max(acc_train), max(acc_test), acc_train, acc_test
 
 
-# === 10-fold stratified CV ===
-skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
+"""# === 10-fold stratified CV ===
+skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 fold_train_max = []
 fold_test_max  = []
 all_train_curves = []
@@ -146,7 +147,23 @@ for fold_num, (trainval_idx, test_idx) in enumerate(skf.split(idx, y), start=1):
     fold_test_max.append(best_te)
     all_train_curves.append(curve_tr)
     all_test_curves.append(curve_te)
-    print(f"Fold {fold_num}: best train {best_tr:.4f}  best test {best_te:.4f}")
+    print(f"Fold {fold_num}: best train {best_tr:.4f}  best test {best_te:.4f}")"""
+
+# === single split (fast first run) ===
+train_idx, test_idx = train_test_split(
+    idx, test_size=0.2, stratify=y, random_state=42)
+train_idx, val_idx = train_test_split(
+    train_idx, test_size=0.111, stratify=y[train_idx], random_state=42)
+
+best_tr, best_te, curve_tr, curve_te = run_one_fold(
+    train_idx, val_idx, test_idx, fold_num=1)
+
+fold_train_max  = [best_tr]
+fold_test_max   = [best_te]
+all_train_curves = [curve_tr]
+all_test_curves  = [curve_te]
+print(f"train: {best_tr:.4f}  test: {best_te:.4f}")
+
 
 # === Aggregate results ===
 train_mean = np.mean(fold_train_max) * 100
