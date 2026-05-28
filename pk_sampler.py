@@ -11,9 +11,8 @@ class PKSampler(Sampler):
         self.fold_dict = defaultdict(list)
         for i,label in enumerate(labels):
             self.fold_dict[label].append(i)
-        for fold,indices in self.fold_dict.items():
-            if len(indices)<self.K:
-                self.fold_dict[fold].pop()
+        self.fold_dict = {fold: indices for fold, indices in self.fold_dict.items()
+                          if len(indices) >= K}
         self.folds = list(self.fold_dict.keys())
 
     def __iter__(self):

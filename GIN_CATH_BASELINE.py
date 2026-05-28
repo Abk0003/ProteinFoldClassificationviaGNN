@@ -128,7 +128,7 @@ def run_one_fold(train_idx, val_idx, test_idx, fold_num):
     return max(acc_train), max(acc_test), acc_train, acc_test
 
 
-"""# === 10-fold stratified CV ===
+# === 10-fold stratified CV ===
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 fold_train_max = []
 fold_test_max  = []
@@ -147,23 +147,7 @@ for fold_num, (trainval_idx, test_idx) in enumerate(skf.split(idx, y), start=1):
     fold_test_max.append(best_te)
     all_train_curves.append(curve_tr)
     all_test_curves.append(curve_te)
-    print(f"Fold {fold_num}: best train {best_tr:.4f}  best test {best_te:.4f}")"""
-
-# === single split (fast first run) ===
-train_idx, test_idx = train_test_split(
-    idx, test_size=0.2, stratify=y, random_state=42)
-train_idx, val_idx = train_test_split(
-    train_idx, test_size=0.111, stratify=y[train_idx], random_state=42)
-
-best_tr, best_te, curve_tr, curve_te = run_one_fold(
-    train_idx, val_idx, test_idx, fold_num=1)
-
-fold_train_max  = [best_tr]
-fold_test_max   = [best_te]
-all_train_curves = [curve_tr]
-all_test_curves  = [curve_te]
-print(f"train: {best_tr:.4f}  test: {best_te:.4f}")
-
+    print(f"Fold {fold_num}: best train {best_tr:.4f}  best test {best_te:.4f}")
 
 # === Aggregate results ===
 train_mean = np.mean(fold_train_max) * 100
