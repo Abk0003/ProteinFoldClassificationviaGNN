@@ -8,13 +8,14 @@ from projection_head import ProjectionHead
 from cath_dataset import Dataset
 from sklearn.model_selection import train_test_split
 from torch_geometric.loader import DataLoader
+
 import numpy as np
 from torch_geometric.nn import GINConv,global_add_pool,BatchNorm
-
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
+TRAIN = False
 data = Dataset(root='data/cath', min_fold_count=10, radius=8.0, max_len=600)
 label = []
 for d in data:
@@ -36,11 +37,15 @@ for d in train:
     train_label.append(int(d.y))
 train_label = np.array(train_label)
 
-sampler = PKSampler(train_label,P=16,K=4,num_batches = 700)
+sampler = PKSampler(train_label,P=32,K=4,num_batches = 700)
 train_loader = DataLoader(dataset=train,batch_sampler=sampler)
 test_loader  = DataLoader(dataset=test,  batch_size=64, shuffle=False)
 full_train_loader = DataLoader(train, batch_size=64, shuffle=False, num_workers=0)
 full_test_loader  = DataLoader(test,  batch_size=64, shuffle=False, num_workers=0)
+
+print(f"folds in sampler: {len(sampler.folds)}")
+print(f"folds in dataset: {data.num_classes}")
+print(f"folds missing from training: {data.num_classes - len(sampler.folds)}")
 
 class GNNEncoder(nn.Module):
     def __init__(self,in_dim,hid_dim=64):
@@ -69,45 +74,52 @@ class GNNEncoder(nn.Module):
         self.conv3 = GINConv(self.nn3)
         self.bn3 = BatchNorm(hid_dim)
 
-        self.drop_out = nn.Dropout(p=0.3)
+        self.dropout = nn.Dropout(p=0.3)
 
     def forward(self,x,edge_index,batch):
         x = F.relu(self.bn1(self.conv1(x,edge_index)))
         p1 = global_add_pool(x,batch)
+        x = self.dropout(x)
         x = F.relu(self.bn2(self.conv2(x,edge_index)))
         p2 = global_add_pool(x,batch)
+        x = self.dropout(x)
         x = F.relu(self.bn3(self.conv3(x,edge_index)))
         p3 = global_add_pool(x,batch)
         f = torch.cat((p1,p2,p3),1)
         return f
 
-encoder = GNNEncoder(in_dim=data.num_node_features,hid_dim=64).to(device)
-proj_head = ProjectionHead(input_dim=192,hidden_dim=128,output_dim=64 ).to(device)
-criterion = SupConLoss(temperature = 0.07)
-optimizer = optim.AdamW(list(encoder.parameters())+list(proj_head.parameters()),lr=0.0005,weight_decay=1e-4)
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,T_max=200,eta_min=1e-5)
+encoder = GNNEncoder(in_dim=data.num_node_features,hid_dim=128).to(device)
+proj_head = ProjectionHead(input_dim=384,hidden_dim=256,output_dim=128 ).to(device)
+criterion = SupConLoss(temperature = 0.1)
+optimizer = optim.AdamW(list(encoder.parameters())+list(proj_head.parameters()),lr=0.001,weight_decay=1e-4)
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,T_max=400,eta_min=1e-5)
 
-print("Contrastive Learning")
-for epoch in range(200):
-    encoder.train()
-    proj_head.train()
-    lossT = 0
-    batches = 0
+if TRAIN:
+    print("Contrastive Learning")
+    for epoch in range(400):
+        encoder.train()
+        proj_head.train()
+        lossT = 0
+        batches = 0
 
-    for batch in train_loader:
-        batch = batch.to(device)
-        optimizer.zero_grad()
-        output = encoder(batch.x,batch.edge_index,batch.batch)
-        z = proj_head(output)
-        loss = criterion(z,batch.y.squeeze())
-        loss.backward()
-        optimizer.step()
-        lossT += loss.item()
-        batches += 1
-    scheduler.step()
-    print(f"Epoch {epoch}, Loss {lossT/batches}")
+        for batch in train_loader:
+            batch = batch.to(device)
+            optimizer.zero_grad()
+            output = encoder(batch.x, batch.edge_index, batch.batch)
+            z = proj_head(output)
+            loss = criterion(z, batch.y.squeeze())
+            loss.backward()
+            optimizer.step()
+            lossT += loss.item()
+            batches += 1
+        scheduler.step()
+        print(f"Epoch {epoch}, Loss {lossT / batches}")
 
-torch.save(encoder.state_dict(),'./encoder.pth')
+    torch.save(encoder.state_dict(), './encoder.pth')
+
+else:
+    encoder.load_state_dict(torch.load('./encoder.pth'))
+
 print("Linear Classification")
 
 encoder.eval()
@@ -124,23 +136,25 @@ def extract(loader):
 x_train , y_train = extract(full_train_loader)
 x_test , y_test = extract(full_test_loader)
 
-linear = nn.Linear(192,data.num_classes).to(device)
-optimizer = optim.Adam(linear.parameters(),lr =0.001)
-criterion = nn.CrossEntropyLoss()
+linear = nn.Linear(384,data.num_classes).to(device)
+optimizer_lin = optim.Adam(linear.parameters(),lr =0.001)
+criterion_lin = nn.CrossEntropyLoss()
+scheduler_lin = optim.lr_scheduler.CosineAnnealingLR(optimizer_lin, T_max=500, eta_min=1e-6)
 
 x_train, y_train = x_train.to(device), y_train.to(device)
 x_test,  y_test  = x_test.to(device),  y_test.to(device)
 
 for epoch in range(500):
     linear.train()
-    optimizer.zero_grad()
+    optimizer_lin.zero_grad()
     output = linear(x_train)
-    loss = criterion(output,y_train)
+    loss = criterion_lin(output,y_train)
     loss.backward()
-    optimizer.step()
+    optimizer_lin.step()
     pred = linear(x_train).argmax(dim=1)
     acc = (pred == y_train).float().mean().item()
     print(f"Epoch {epoch}, Loss {loss.item()}, Accuracy {acc}")
+    scheduler_lin.step()
 linear.eval()
 with torch.no_grad():
     with torch.no_grad():
