@@ -15,7 +15,7 @@ from torch_geometric.nn import GINConv,global_mean_pool,BatchNorm
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
-TRAIN = True
+TRAIN = False
 data = Dataset(root='data/cath', min_fold_count=10, radius=8.0, max_len=600)
 label = []
 for d in data:
@@ -80,8 +80,10 @@ class GNNEncoder(nn.Module):
         x = F.relu(self.bn1(self.conv1(x,edge_index)))
         p1 = global_mean_pool(x,batch)
         x = self.dropout(x)
+        x = self.dropout(x)
         x = F.relu(self.bn2(self.conv2(x,edge_index)))
         p2 = global_mean_pool(x,batch)
+        x = self.dropout(x)
         x = self.dropout(x)
         x = F.relu(self.bn3(self.conv3(x,edge_index)))
         p3 = global_mean_pool(x,batch)
@@ -94,9 +96,16 @@ criterion = SupConLoss(temperature = 0.1)
 optimizer = optim.AdamW(list(encoder.parameters())+list(proj_head.parameters()),lr=0.001,weight_decay=1e-4)
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,T_max=400,eta_min=1e-5)
 
+def augment(batch):
+    x = batch.x.clone()
+    mask = torch.rand_like(x) < 0.15
+    x[mask] = 0
+    return x
+
+
 if TRAIN:
     print("Contrastive Learning")
-    for epoch in range(00):
+    for epoch in range(400):
         encoder.train()
         proj_head.train()
         lossT = 0
@@ -105,9 +114,15 @@ if TRAIN:
         for batch in train_loader:
             batch = batch.to(device)
             optimizer.zero_grad()
-            output = encoder(batch.x, batch.edge_index, batch.batch)
-            z = proj_head(output)
-            loss = criterion(z, batch.y.squeeze())
+            x1 = augment(batch)
+            x2 = augment(batch)
+            h1 = encoder(x1, batch.edge_index, batch.batch)
+            h2 = encoder(x2, batch.edge_index, batch.batch)
+            z1 = proj_head(h1)
+            z2 = proj_head(h2)
+            z = torch.cat([z1,z2],0)
+            y = torch.cat([batch.y.squeeze(),batch.y.squeeze()],dim=0)
+            loss = criterion(z, y)
             loss.backward()
             optimizer.step()
             lossT += loss.item()
@@ -122,20 +137,6 @@ else:
 
 print("Linear Classification")
 
-encoder.eval()
-@torch.no_grad()
-def extract(loader):
-    embs,labels = [],[]
-    for batch in loader:
-        batch = batch.to(device)
-        output = encoder(batch.x,batch.edge_index,batch.batch)
-        embs.append(output.detach().cpu())
-        labels.append(batch.y.detach().cpu())
-    return torch.cat(embs),torch.cat(labels).squeeze()
-
-x_train , y_train = extract(full_train_loader)
-x_test , y_test = extract(full_test_loader)
-
 class Classifier(nn.Module):
     def __init__(self):
         super(Classifier,self).__init__()
@@ -148,32 +149,61 @@ class Classifier(nn.Module):
         x = self.lin3(x)
         return x
 linear = Classifier().to(device)
-optimizer_lin = optim.Adam(linear.parameters(),lr =1e-2)
+optimizer_lin = optim.AdamW((list(encoder.parameters()) + list(linear.parameters())),lr =1e-4,weight_decay=1e-4)
 criterion_lin = nn.CrossEntropyLoss()
-scheduler_lin = optim.lr_scheduler.CosineAnnealingLR(optimizer_lin, T_max=500, eta_min=1e-6)
 
-x_train, y_train = x_train.to(device), y_train.to(device)
-x_test,  y_test  = x_test.to(device),  y_test.to(device)
-
-for epoch in range(500):
+for epoch in range(200):
+    encoder.train()
     linear.train()
-    optimizer_lin.zero_grad()
-    output = linear(x_train)
-    loss = criterion_lin(output,y_train)
-    loss.backward()
-    optimizer_lin.step()
-    pred = linear(x_train).argmax(dim=1)
-    acc = (pred == y_train).float().mean().item()
-    print(f"Epoch {epoch}, Loss {loss.item()}, Accuracy {acc}")
-    scheduler_lin.step()
+
+    total_loss = 0
+    correct = 0
+    total = 0
+
+    for batch in full_train_loader:
+        batch = batch.to(device)
+
+        optimizer_lin.zero_grad()
+
+        # forward THROUGH encoder
+        emb = encoder(batch.x, batch.edge_index, batch.batch)
+
+        # forward THROUGH classifier
+        logits = linear(emb)
+
+        loss = criterion_lin(logits, batch.y)
+
+        loss.backward()
+        optimizer_lin.step()
+
+        total_loss += loss.item()
+
+        preds = logits.argmax(dim=1)
+        correct += (preds == batch.y).sum().item()
+        total += batch.y.size(0)
+
+    acc = correct / total
+    print(f"Epoch {epoch} | Loss {total_loss/len(full_train_loader):.4f} | Train Acc {acc:.4f}")
+
+encoder.eval()
 linear.eval()
+
+correct = 0
+total = 0
+
 with torch.no_grad():
-    with torch.no_grad():
-        pred = linear(x_test).argmax(dim=1)
-        acc = (pred == y_test).float().mean().item()
-print(f"SupCon linear probe accuracy: {acc*100:.2f}%")
-print(f"Supervised GIN baseline:      41.90%")
-print(f"Delta: {(acc - 0.419)*100:+.2f}%")
+    for batch in full_test_loader:
+        batch = batch.to(device)
+
+        emb = encoder(batch.x, batch.edge_index, batch.batch)
+        logits = linear(emb)
+
+        preds = logits.argmax(dim=1)
+
+        correct += (preds == batch.y).sum().item()
+        total += batch.y.size(0)
+
+print("Test Acc:", correct / total)
 
 
 
