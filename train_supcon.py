@@ -10,12 +10,12 @@ from sklearn.model_selection import train_test_split
 from torch_geometric.loader import DataLoader
 
 import numpy as np
-from torch_geometric.nn import GINConv,global_add_pool,BatchNorm
+from torch_geometric.nn import GINConv,global_mean_pool,BatchNorm
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
-TRAIN = False
+TRAIN = True
 data = Dataset(root='data/cath', min_fold_count=10, radius=8.0, max_len=600)
 label = []
 for d in data:
@@ -78,13 +78,13 @@ class GNNEncoder(nn.Module):
 
     def forward(self,x,edge_index,batch):
         x = F.relu(self.bn1(self.conv1(x,edge_index)))
-        p1 = global_add_pool(x,batch)
+        p1 = global_mean_pool(x,batch)
         x = self.dropout(x)
         x = F.relu(self.bn2(self.conv2(x,edge_index)))
-        p2 = global_add_pool(x,batch)
+        p2 = global_mean_pool(x,batch)
         x = self.dropout(x)
         x = F.relu(self.bn3(self.conv3(x,edge_index)))
-        p3 = global_add_pool(x,batch)
+        p3 = global_mean_pool(x,batch)
         f = torch.cat((p1,p2,p3),1)
         return f
 
@@ -96,7 +96,7 @@ scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,T_max=400,eta_min=1e-
 
 if TRAIN:
     print("Contrastive Learning")
-    for epoch in range(400):
+    for epoch in range(00):
         encoder.train()
         proj_head.train()
         lossT = 0
@@ -136,8 +136,19 @@ def extract(loader):
 x_train , y_train = extract(full_train_loader)
 x_test , y_test = extract(full_test_loader)
 
-linear = nn.Linear(384,data.num_classes).to(device)
-optimizer_lin = optim.Adam(linear.parameters(),lr =0.001)
+class Classifier(nn.Module):
+    def __init__(self):
+        super(Classifier,self).__init__()
+        self.lin1 = nn.Linear(in_features=384,out_features=128)
+        self.lin2 = nn.Linear(in_features=128,out_features=128)
+        self.lin3 = nn.Linear(in_features=128,out_features=data.num_classes)
+    def forward(self,x):
+        x = F.relu(self.lin1(x))
+        x = F.relu(self.lin2(x))
+        x = self.lin3(x)
+        return x
+linear = Classifier().to(device)
+optimizer_lin = optim.Adam(linear.parameters(),lr =1e-2)
 criterion_lin = nn.CrossEntropyLoss()
 scheduler_lin = optim.lr_scheduler.CosineAnnealingLR(optimizer_lin, T_max=500, eta_min=1e-6)
 
