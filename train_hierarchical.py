@@ -21,9 +21,9 @@ from hierarchy import affinity
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
-TRAIN = True
+TRAIN = False
 FINE_TUNE = True
-VISUALIZE = True
+VISUALIZE = False
 data = Dataset(root='data/cath', min_fold_count=10, radius=8.0, max_len=600)
 print(data[0].f)
 label = []
@@ -166,7 +166,7 @@ if FINE_TUNE:
     optimizer_lin = optim.AdamW((list(encoder.parameters()) + list(linear.parameters())), lr=1e-4, weight_decay=1e-4)
     criterion_lin = nn.CrossEntropyLoss()
 
-    for epoch in range(200):
+    for epoch in range(350):
         encoder.train()
         linear.train()
 
