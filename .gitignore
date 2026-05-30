@@ -22,7 +22,6 @@ venv/
 
 # outputs
 results/
-*.png
-*.jpg
+
 checkpoints/
 *.ckpt
