@@ -8,14 +8,20 @@ from projection_head import ProjectionHead
 from cath_dataset import Dataset
 from sklearn.model_selection import train_test_split
 from torch_geometric.loader import DataLoader
-
 import numpy as np
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from collections import Counter
+
 from torch_geometric.nn import GINConv,global_mean_pool,BatchNorm
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
 TRAIN = False
+FINE_TUNE = False
+VISUALIZE = True
 data = Dataset(root='data/cath', min_fold_count=10, radius=8.0, max_len=600)
 label = []
 for d in data:
@@ -135,75 +141,158 @@ if TRAIN:
 else:
     encoder.load_state_dict(torch.load('./encoder.pth'))
 
-print("Linear Classification")
+if FINE_TUNE:
+    print("Linear Classification")
 
-class Classifier(nn.Module):
-    def __init__(self):
-        super(Classifier,self).__init__()
-        self.lin1 = nn.Linear(in_features=384,out_features=128)
-        self.lin2 = nn.Linear(in_features=128,out_features=128)
-        self.lin3 = nn.Linear(in_features=128,out_features=data.num_classes)
-    def forward(self,x):
-        x = F.relu(self.lin1(x))
-        x = F.relu(self.lin2(x))
-        x = self.lin3(x)
-        return x
-linear = Classifier().to(device)
-optimizer_lin = optim.AdamW((list(encoder.parameters()) + list(linear.parameters())),lr =1e-4,weight_decay=1e-4)
-criterion_lin = nn.CrossEntropyLoss()
 
-for epoch in range(200):
-    encoder.train()
-    linear.train()
+    class Classifier(nn.Module):
+        def __init__(self):
+            super(Classifier, self).__init__()
+            self.lin1 = nn.Linear(in_features=384, out_features=128)
+            self.lin2 = nn.Linear(in_features=128, out_features=128)
+            self.lin3 = nn.Linear(in_features=128, out_features=data.num_classes)
 
-    total_loss = 0
+        def forward(self, x):
+            x = F.relu(self.lin1(x))
+            x = F.relu(self.lin2(x))
+            x = self.lin3(x)
+            return x
+
+
+    linear = Classifier().to(device)
+    optimizer_lin = optim.AdamW((list(encoder.parameters()) + list(linear.parameters())), lr=1e-4, weight_decay=1e-4)
+    criterion_lin = nn.CrossEntropyLoss()
+
+    for epoch in range(200):
+        encoder.train()
+        linear.train()
+
+        total_loss = 0
+        correct = 0
+        total = 0
+
+        for batch in full_train_loader:
+            batch = batch.to(device)
+
+            optimizer_lin.zero_grad()
+
+            # forward THROUGH encoder
+            emb = encoder(batch.x, batch.edge_index, batch.batch)
+
+            # forward THROUGH classifier
+            logits = linear(emb)
+
+            loss = criterion_lin(logits, batch.y)
+
+            loss.backward()
+            optimizer_lin.step()
+
+            total_loss += loss.item()
+
+            preds = logits.argmax(dim=1)
+            correct += (preds == batch.y).sum().item()
+            total += batch.y.size(0)
+
+        acc = correct / total
+        print(f"Epoch {epoch} | Loss {total_loss / len(full_train_loader):.4f} | Train Acc {acc:.4f}")
+
+    encoder.eval()
+    linear.eval()
+
     correct = 0
     total = 0
 
-    for batch in full_train_loader:
-        batch = batch.to(device)
+    with torch.no_grad():
+        for batch in full_test_loader:
+            batch = batch.to(device)
 
-        optimizer_lin.zero_grad()
+            emb = encoder(batch.x, batch.edge_index, batch.batch)
+            logits = linear(emb)
 
-        # forward THROUGH encoder
-        emb = encoder(batch.x, batch.edge_index, batch.batch)
+            preds = logits.argmax(dim=1)
 
-        # forward THROUGH classifier
-        logits = linear(emb)
+            correct += (preds == batch.y).sum().item()
+            total += batch.y.size(0)
 
-        loss = criterion_lin(logits, batch.y)
+    print("Test Acc:", correct / total)
 
-        loss.backward()
-        optimizer_lin.step()
+if VISUALIZE:
+    encoder.eval()
 
-        total_loss += loss.item()
 
-        preds = logits.argmax(dim=1)
-        correct += (preds == batch.y).sum().item()
-        total += batch.y.size(0)
+    @torch.no_grad()
+    def extract_viz(loader):
+        embs, labels = [], []
+        for batch in loader:
+            batch = batch.to(device)
+            h = encoder(batch.x, batch.edge_index, batch.batch)
+            embs.append(h.cpu().numpy())
+            labels.append(batch.y.cpu().numpy())
+        return np.concatenate(embs), np.concatenate(labels)
 
-    acc = correct / total
-    print(f"Epoch {epoch} | Loss {total_loss/len(full_train_loader):.4f} | Train Acc {acc:.4f}")
 
-encoder.eval()
-linear.eval()
+    x, y = extract_viz(full_test_loader)
 
-correct = 0
-total = 0
+    np.random.seed(42)
+    selected = []
+    for fold in np.unique(y):
+        fold_idx = np.where(y == fold)[0]
+        chosen = np.random.choice(fold_idx,
+                                  min(50, len(fold_idx)),
+                                  replace=False)
+        selected.extend(chosen)
+    selected = np.array(selected)
+    X_sub = x[selected]
+    y_sub = y[selected]
+    print(f"subsampled to {len(X_sub)} proteins across {len(np.unique(y_sub))} folds")
 
-with torch.no_grad():
-    for batch in full_test_loader:
-        batch = batch.to(device)
+    fold_count = Counter(y.tolist())
+    top = np.array([f for f,_ in fold_count.most_common(20)])
+    sel = np.isin(y_sub, top)
+    x_sel = X_sub[sel]
+    y_sel = y_sub[sel]
+    d = {}
+    for i,f in enumerate(top):
+        d[f] = i
+    y_map = []
+    for f in y_sel:
+        y_map.append(d[f])
+    y_map = np.array(y_map)
+    # run t-SNE
+    print("running t-SNE (takes 1-3 minutes)...")
+    tsne = TSNE(
+        n_components=2,
+        perplexity=30,
+        max_iter=1000,
+        metric='cosine',
+        init='pca',
+        random_state=42,
+        verbose=1,
+    )
+    Z = tsne.fit_transform(x_sel)
 
-        emb = encoder(batch.x, batch.edge_index, batch.batch)
-        logits = linear(emb)
+    base = plt.colormaps["turbo"]
+    color = base.resampled(381)
 
-        preds = logits.argmax(dim=1)
-
-        correct += (preds == batch.y).sum().item()
-        total += batch.y.size(0)
-
-print("Test Acc:", correct / total)
+    # plot
+    fig, ax = plt.subplots(figsize=(10, 8))
+    scatter = ax.scatter(
+        Z[:, 0], Z[:, 1],
+        c=y_map,
+        cmap="tab20",
+        s=8,
+        alpha=0.7,
+    )
+    ax.set_title(
+        f'SupCon GIN - Top 20 Folds',
+        fontsize=13
+    )
+    ax.set_xticks([])
+    ax.set_yticks([])
+    plt.tight_layout()
+    plt.savefig('tsne_top20.png', dpi=200, bbox_inches='tight')
+    plt.show()
+    print("saved tsne_top20.png")
 
 
 
