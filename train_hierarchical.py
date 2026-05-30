@@ -16,6 +16,7 @@ from collections import Counter
 import geoopt
 from torch_geometric.nn import GINConv,global_mean_pool,BatchNorm
 from hierarchical_supcon import HierarchicalSupCon
+from hierarchy import affinity
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
@@ -100,7 +101,7 @@ class GNNEncoder(nn.Module):
 
 encoder = GNNEncoder(in_dim=data.num_node_features,hid_dim=128).to(device)
 proj_head = ProjectionHead(input_dim=384,hidden_dim=256,output_dim=128 ).to(device)
-criterion = HierarchicalSupCon(a = 1.0, temperature = 0.1)
+criterion = HierarchicalSupCon(a = 1.5, temperature = 0.1)
 optimizer = optim.AdamW(list(encoder.parameters())+list(proj_head.parameters()),lr=0.001,weight_decay=1e-4)
 scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,T_max=400,eta_min=1e-5)
 
