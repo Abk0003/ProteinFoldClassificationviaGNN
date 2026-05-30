@@ -92,9 +92,8 @@ class Dataset(InMemoryDataset):
             if len(aa) < 20 or len(aa) > self.max_len:
                 continue
             try:
-                g = build_graph(coords, aa,
-                                label=int(row["fold_int"]),
-                                radius=self.radius)
+                g = build_graph(coords, aa,label=int(row["fold_int"]),radius=self.radius)
+                g.f = row["fold_label"]
                 data_list.append(g)
             except Exception:
                 continue
